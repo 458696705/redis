@@ -1,0 +1,86 @@
+缓存击穿 --》redis分布式锁 --》集群
+缓存雪崩--》大部分数据失效
+
+单机版：持久化
+缺点：1、易丢失数据 2、读写能力受限 3、磁盘存储能力
+
+主从复制： 1、扩大读写能力 2、数据备份
+缺点：不能高可用，需要人为的将主机变为从机
+
+哨兵：主从切换自动化,在故障转移期间,宕机的主节点是不可用的
+
+集群：提高存储能力,写的节点可以有多个,即使主机宕机,仍有其它的主节点可以写
+
+配置文件中集群开关
+cluster-enabled yes 以集群方式运行，如果不分配槽位是写不了数据
+cluster-require-full-coverage yes NO:小集群宕机且没有从机接替的情况下,可能会造成数据丢失，如果设置为YES,则整个集群都不能工作，保证了数据
+一致性，但是可用性就不高了。
+
+sed 's/7000/7001/g' redis7000/redis.conf > redis7001/redis.conf
+
+5.0.5搭建集群（老版本 redis-trib.rb --cluster help）
+redis-cli --cluster create host1:port1...hostN:portN（meet互相通信）
+          --cluster-replicas<arg> arg(判别主从) 写1 假设有6台几器 比例就是3:3
+		  3台主机3台从机
+		  arg 写2 假设有6台几器 会报错 主从的比列就是1：2 就是2：4，redis官网规定主节点必须要3个以上
+          (3台主机)只有主机才会有槽,默认平均分配,主节点的从节点是随机分配的。
+		  0-5460 5461-10922 10923-16383 
+原生搭建
+1meet
+cluster meet ip port1
+2指派槽
+3分配主从
+
+增加节点
+add-node new_host:new_port existing_host:existing_port
+         --cluster-salve  以从节点方式加入 （不加参数，默认就是主节点）
+		 --cluster-master-id<arg> 以从节点方式加入,指定主节点
+		 
+分配槽位
+/redis-cli --cluster reshard 已存在节点ip ： 端口
+执行流程：提示要分配多少槽-》接收节点ID-》all/done(all:槽位从已分配槽位的主节点平均获取。done：指定从从已分配槽位的主节点获取槽位)  
+槽位迁移过去，数据也会迁移过去。
+
+故障转移期间(主从切换)集群不能工作。或者修改这个配置为NO
+cluster-require-full-coverage yes NO:如果数据正好落入故障转移的小集群槽位里面则会造成数据丢失，如果设置为YES,则整个集群都不能工作，保证了数据
+一致性，但是可用性就不高了。
+
+缩容集群
+一、迁移槽位
+redis-cli --cluster reshard --cluster-from 要迁出节点ID  --cluster-to  接收槽节点ID --cluster-slots 迁出槽数量 已存在节点ip 端口
+二、删除节点
+redis-cli --cluster del-node 已存在节点IP：端口 要删除的节点ID(先删除从节点,如果先删除主节点，从节点就会进行故障转移，没有必要)
+
+问题
+删除槽位后可以直接kill吗？不能，因为这样集群中仍然会保留宕机后小集群的信息。
+分配槽位的时候不会阻塞数据。
+
+集群不能执行mset  或者 mget
+mset   key1   value  key2   value       同时设置一个或多个 key-value 对。
+mget   key1   key 2    获取所有(一个或多个)给定 key 的值。
+原因：每个node就是一个连接池,对redis写入时只能获取一个连接池,key可能对应着不同的节点。
+ public String mset(String... keysvalues) {    //根据槽位获取连接池
+        for (int i=0;i<keysvalues.length;i++){
+            if(i%2==0){
+                int slot=JedisClusterCRC16.getCRC16(keysvalues[i])%16384;
+                Jedis connectionFromSlot = this.getConnectionFromSlot(slot);
+                System.out.println(keysvalues[i]+"---"+keysvalues[i + 1]);
+                System.out.println(connectionFromSlot.set(keysvalues[i], keysvalues[i + 1]));
+                connectionFromSlot.close();
+            }
+        }
+        return "OK";
+    }
+	
+分布式锁
+为什么是使用？java锁(多线程) 分布式锁(多进程)
+怎么实现？
+普通锁
+setnx  key   value   只有在 key 不存在时设置 key 的值。
+expire key  为给定的key设置过期时间
+setex 键 秒值 真实值    设置带过期时间的key，动态设置。
+ttl key 查看还有多少时间过期   -1表示永不过期  -2表示已过期
+
+Redlock(高可用)依赖于多台机器，可以是多台单机版,也可以是集群
+思想：让三个redis实列去获取锁,成功一半就觉得锁获取成功了，在这种情况可以有一台redis宕机没问题。
+
