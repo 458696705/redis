@@ -1,0 +1,211 @@
+三种特殊数据类型
+如何去筛选用户是最快的？可以用 0 1 0 1代表
+统计用户信息,活跃,不活跃！登录、未登录！打卡、未打卡！ userid status day
+Bitmaps
+位存储:两个状态的都可以使用bitmaps!都是操作二进制来进行记录,就只有0和1两个状态！通过位运算来表示元素的值。
+365天=365bit 1字节=8bit 46个字节左右！省内存
+
+使用bitmap来记录周一到周日的打卡！
+周一：1(打卡) 周二：0(未打卡) 周三：0(未打卡)
+1 2 3 4 5 6 7
+0 1 2 3 4 5 6
+以此类推
+127.0.0.1:6379>setbit sign 0 1 星期一打卡
+(integer)0
+127.0.0.1:6379>setbit sign 1 0 星期二没有打卡 
+(integer)0
+127.0.0.1:6379>setbit sign 2 0 星期三没有打卡
+(integer)0
+127.0.0.1:6379>setbit sign 3 1 星期四打卡
+(integer)0
+127.0.0.1:6379>setbit sign 4 1 星期五打卡
+(integer)0
+127.0.0.1:6379>setbit sign 5 0 星期六没有打卡
+(integer)0
+127.0.0.1:6379>setbit sign 6 0 星期天没有打卡
+(integer)0
+查看某一天是否打卡
+127.0.0.1:6379>gitbit sign 3 周四打卡  
+(integer)1
+127.0.0.1:6379>gitbit sign 6 周天没打卡
+(integer)0
+统计操作,统计打卡的天数：
+127.0.0.1:6379>bitcount sign
+(integer)3    
+
+位图就是提供修改底层value数据二进制的api
+朋友圈点赞功能(不能保存数据)
+1、点赞
+2、取消点赞
+3、查看是否点赞
+4、统计这条朋友一共点赞数
+字母         a       b       c
+二进制   1100001 1100010 1100011
+十进制   97      98      99
+redis中存储值是以二进制存储
+set runhe abc
+setbit runhe 6 1
+setbit runhe 7 0
+get runhe 
+"bbc"
+
+bitcount runhe  //value以二进制方式保存,统计一共有多少个1
+10
+
+setbit runhe 1000 0   //runhe key一共只有24bit,设置第1000位改为0[自动扩容]
+"bbc\x00\x00\x00\x00..."
+前提：用户表有是数字唯一字段
+用户id 1000
+朋友圈id 2000
+用户id  1001
+setbit 2000 1001 1 //点赞
+setbit 2000 1001 0 //取消点赞
+getbit 2000 1001 //查看是否点赞
+bitcunt 2000 //统计这条朋友一共点赞数
+
+bitmap本质是string,是一连串的2进制数字(0或1),每一位所在的位置位偏移(offset)
+string(bitmap)最大长度是512MB,所以它们可表示2的32次方的不同位
+
+布隆过滤器 位数组，占用空间小 防止缓存穿透，存在误判，比如数字明明不存在，却认为存在。影响误判率的一共是两个因素：hah函数的个数,位数组的大小。
+数组过大或者hash函数过多也不行(cap)
+list object数组
+谷歌框架提供的布隆过滤器---->> jvm
+依赖
+<groupId>com.google.guava</groupId>
+<artifactId>guava</artifactId>
+<version>27.0.1-jre</version>
+使用：//参数: size 预计要插入多少数据、 fpp 容错率、 list 创建的是object数组
+private static BloomFiler<Integer> blooFilter=BloomFiler.create(Funnels.integerFunnel(),size,0.001); 
+代码底层会根据预计要插入多少数据和容错率分配位数组大小和hash函数个数
+
+缓存穿透：仅仅是减少非法访问
+为什么使用缓存：保护数据库,提高性能。
+伪代码：
+查缓存 有 直接前端
+      没有 查询数据库，加入缓存放回
+	       数据库没有 返回
+
+使压根就不存在数据不去查询数据库。非常难以维护,不能删除（出现hash碰撞的情况），需要定时更新，重建（频率：根据数据库删除数据的多少）。
+举例：首先在项目启动的时候将所有的订单id加入到布隆过滤器之中。
+先查询布隆过滤器 如果订单id不存在直接返回。
+
+缓存穿透： 数据库没有、缓存没有；   缓存击穿：数据库里面有、缓存没有
+
+geospatial地理位置
+朋友的定位,附近的人,打车距离计算
+这个功能可以推算出地理位置的信息,两地之间的距离,方圆几里的人！
+GEOADD
+GEODIST
+GEOHASH
+GEOPOS
+GEORADIUS
+GEORADIUSBYMEMBER
+官方文档:https://www.redis.net.cn/order/3685.html
+#geoadd 添加地理位置 #规则：两极无法直接添加,我们一般会下载城市数据,直接通过java城市一次性导入！
+#参数 key 值(纬度,经度,名称)
+127.0.0.1：6379>geoadd chain:city 116.40 39.90 beijing     //116.40 39.90经纬度
+(integer)1
+127.0.0.1：6379>geoadd china:city 121.47 31.23 shanghai
+(integer)1
+127.0.0.1：6379>geoadd china:city 106.50 29.53 chongqing 114.05 22.52 shengzheng
+(integer)2
+127.0.0.1：6379>geoadd china:city 120.16 30.24 hangzhou 108.96 34.26 xian
+(integer)2
+#GEOPOS 命令 - 获取指定城市的经度和纬度  #获得当前定位：一定是一个坐标值！
+127.0.0.1：6379>geopos china:city beijing
+1) 1)"116.39999896287918091"
+   2)"39.90000009167092543"
+
+#Redis GEODIST 命令 - 返回两个给定位置之间的距离
+单位如下：
+m 表示单位为米。
+km 表示单位为千米。
+mi 表示单位为英里。
+ft 表示单位为英尺。
+127.0.0.1：6379> GEODIST china:city beijing shanghai
+"1067378.7564"
+127.0.0.1：6379> GEODIST china:city beijing shanghai km
+"1067.3788"
+
+我附近的人？(获得所有附近的人的地址,定位)通过半径来查询
+Redis GEORADIUS 命令 - 以给定的经纬度为中心， 找出某一半径内的元素
+127.0.0.1：6379> GEORADIUS china:city 110 30 1000 km
+1)"chongqing"
+2)"xian"
+127.0.0.1：6379> GEORADIUS china:city 110 30 500 km withdisk
+1) 1)"chongqing"
+   2)"341.9374"
+127.0.0.1：6379> GEORADIUS china:city 110 30 500 km withcoord
+1) 1)"chongqing"
+   2) 1)"106.49999"
+      2)"29.5299995"
+获取附近指定数量的人     
+127.0.0.1：6379> GEORADIUS china:city 110 30 500 km withdisk withcoord count 1
+1) 1)"chongqing"
+   2)"341.9374"
+   3)1)"106.49999"
+     2)"29.5299995"
+	 
+GEORADIUSBYMEMBER（城市之间的定位，导航）
+#以北京位位中心附近1000 km的城市
+127.0.0.1：6379>GEORADIUSBYMEMBER china:city beijing 1000 km
+1）"beijing"
+2）"xian"
+
+GEOHASH
+#返回当前城市的经纬度字符串
+127.0.0.1：6379>geohash china:city beijing chongqing
+1)"wx4fbxxfke0"
+2)"wm5xzrybty0"
+
+GEO底层的实现原理其实就是zset!我们可以用zset命令来操作geo!
+127.0.0.1：6379>zrange china:city 0 -1
+1)"chongqing"
+2)"xian"
+3"shengzheng"...
+127.0.0.1：6379>zrange china:city chongqing
+(integer)1
+127.0.0.1：6379>zrange china:city 0 -1
+1)"xian"
+2"shengzheng"...
+
+Hyperloglog 基数统计的算法 占用内存固定 
+A{1,3,5,7,8,7} B{1,3,5,7,8}
+基数{不重复的元素} =5 ,可以接受误差！
+简介
+网页的uv(1个人多次访问一个网站,但还是算作一个人)
+传统方式用set保存用户id //我们的目的是为了计数，而不是保存用户id
+127.0.0.1：6379>pfadd mykey a b c d e f p
+(integer)1
+127.0.0.1：6379>pfcount mykey
+(integer)7 
+127.0.0.1：6379>pfadd mykey2 a b i j k 
+(integer)1
+127.0.0.1：6379>pfcount mykey2
+(integer)5
+127.0.0.1：6379>pfmerge mykey3 mykey mykey2
+(integer)10
+相关说明：用于进行基数统计，不是集合，不保存数据,只记录数量而不是具体的数据
+          核心是技术估算算法，最终数值存在一定误差
+		  消耗空间极小,每个hyperloglog key占用了12k内存用于标记基数
+		  pfadd命令不是一次性分配12k内存使用,会随着基数的增加内存逐渐增大
+		  Pfmerge命令合并后占用的存储空间位12k，无论合并之前数据量是多少 
+		  
+redis过期策略		  
+1）设置过期时间
+设置一个一批key只能存活1个小时，那么接下来1个小时后,redis是怎么对key进行删除的？
+定期删除+惰性删除
+定期删除：所谓定期删除，指的是redis默认每隔100ms就随机抽取一些设置了过期时间的key，检查其是否过期
+如果过期就删除。
+惰性删除：并不是key到期时间就被删除,而是你查询这个key的时候,redis会检查,这个key设置了
+过期时间是否过期,如果过期此时就会删除,不会给你返回任何东西
+
+惰性删除产生的问题：存在大量的key堆积在内存里,导致redis内存块耗尽
+内存淘汰机制：
+如果redis的内存占用过多的时候,此时就会进行内存淘汰,都有如下一些策略：
+1）noeviction:当内存不足以容纳新写入数据时,新写入操纵会报错。
+2）allkeys-lru:当内存不足以容纳新写入数据时,在键空间中,移除最近最少使用的key
+3）allkeys-random:当内存不足以容纳新写入数据时,在键空间中随机移除某个key
+4)volatile-lru：当内存不足以容纳新写入数据时,在设置过期时间的键空间中,移除最近最少使用的key
+5)volatile-random：当内存不足以容纳新写入数据时，在设置过期时间的键空间中,随机移除某个key
+6）volatile-ttl:当内存不足以容纳新写入数据时,在设置了过期时间的键空间中,有更早过期时间的key优先移除
