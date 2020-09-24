@@ -1,0 +1,88 @@
+#配置nginx work 进程数
+worker_processes  1;
+#配置块
+#事件模块配置
+events {
+    #每个work 进程的最大连接数
+    worker_connections  1024;
+}
+#http 服务跟路径
+http {
+    include       mime.types; //文本引入
+    default_type  application/octet-stream;
+    sendfile        on;
+    keepalive_timeout  65;
+    #server模块
+    server {
+        listen       80;
+        server_name  localhost;
+        location / {
+            root   html;
+            index  index.html index.htm;
+        }
+        location /nginx_status {
+    	   stub_status on;
+    	   access_log   off;
+  	    }
+    }
+	
+	server {
+        listen       80;
+        server_name  www.baidu.com;
+        location / {
+            root   html;
+            index  index.html index.htm;
+        } 
+                      （浏览器地址输入www.baidu.com/wj）
+        location /wj { /*root配置此时访问的文件路径是/www/wj/wj, 因此nginx会出现无法找到文件目录/www/wj/wj*/
+            root   /www/wj/;
+            index  index.html index.htm;
+        }
+                          （浏览器地址输入www.baidu.com/wj）       
+       location /wj/index.html { /*alias配置此时访问的文件路径是/www/wj/index.html                         
+                                   会将location后面的/wj去掉在进行拼接*/	   
+            alias   /www/wj/;
+            index  index.html index.htm;
+        }
+                        
+        location /static { /*动静分离通过static关键字区分,所有的静态资源访问到这里面，前缀匹配localtion分流*/
+            alias   /www/static/;
+            index  index.html index.htm;
+        }
+                              （浏览器地址输入www.baidu.com/code.css ）
+       location ~* \.(jpg|gif|css|png)$ { /*正则表达式动静分离,*表示不区分大小写,$结束符号*/
+            root /www/static/;
+        }
+
+        //防盗链演示(防图片) 只有浏览器地址输入*.luban.com/wj/wj.png才能访问,此时访问的文件路径是/www/static/wj/wj.png
+		location ~* \.(jpg|gif|css|png)$ {
+		   valid_referers none blocked *.luban.com;
+            if ($invalid_referer) {
+             return 403;
+            }
+            root /www/static/;
+        }
+
+        //创建IP黑名单   （浏览器地址输入192.168.0.1/wj 无法访问403Forbidden）
+	    location /wj { 
+		    封禁指定IP
+            deny 192.168.0.1;
+            alias   /www/wj/;
+            index  index.html index.htm;
+        }
+
+        location /nginx_status {
+    	   stub_status on;
+    	   access_log   off;
+  	    }
+    }
+
+    
+}
+http-> server-> location（proxy_pass ）
+
+
+负载均衡配置与参数解析
+通过proxy_pass 可以把请求代理至后端服务，但是为了实现更高的负载及性能， 我们的后端服务通常是多个， 这个是时候可以通过upstream 模块实现负载均衡。
+
+nginx可以做缓存，将urlmd5后作为key,value是页面内容，与redis的优势在于减少io操作。如果页面有数据更改,比如价格更改,价格服务通过mq将消息发送商详页，由商详页服务调用nginx api删除对应的缓存。
